@@ -179,8 +179,8 @@ func (app webApp) Register(ctx context.Context, input *struct {
 //     Appliances owned by their current group, optionally filtered by
 //     ?status=.
 func (app webApp) ListAppliances(ctx context.Context, input *struct {
-	Authorization string  `header:"Authorization"`
-	Status        *string `query:"status"`
+	Authorization string `header:"Authorization"`
+	Status        string `query:"status"`
 }) (*struct {
 	Body []restmodels.ApplianceResponse
 }, error) {
@@ -202,10 +202,10 @@ func (app webApp) ListAppliances(ctx context.Context, input *struct {
 		logging.ErrorErr(err, ctx)
 		return nil, huma.Error500InternalServerError("failed to list appliances")
 	}
-	if input.Status != nil {
+	if input.Status != "" {
 		filtered := appliances[:0]
 		for _, a := range appliances {
-			if string(a.Status) == *input.Status {
+			if string(a.Status) == input.Status {
 				filtered = append(filtered, a)
 			}
 		}
