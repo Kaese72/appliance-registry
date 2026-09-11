@@ -1,0 +1,75 @@
+# "Stolen" from https://docs.github.com/en/actions/publishing-packages/publishing-docker-images
+name: Create and publish a Docker image
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Install dependencies
+        run: go get .
+      - name: Test with Go
+        run: go test ./... -json > TestResults.json
+      - name: Upload Go test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: Go-results
+          path: TestResults.json
+
+  build-and-push-image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - dockerfile: Dockerfile
+            image: ghcr.io/${{ github.repository }}
+          - dockerfile: Dockerfile.migrater
+            image: ghcr.io/${{ github.repository }}-migrater
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ matrix.image }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  trigger-renovate-in-gitops-repo:
+    needs: build-and-push-image
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh workflow run renovate.yml --ref master --repo Kaese72/huemie-gitops-base
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}

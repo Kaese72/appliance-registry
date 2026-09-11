@@ -1,0 +1,5 @@
+# syntax=docker/dockerfile:1
+# Build
+FROM flyway/flyway
+# Load /flyway/sql
+COPY migrations /flyway/sql
