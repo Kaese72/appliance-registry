@@ -41,10 +41,13 @@ type ClaimApplianceResponse struct {
 // ArgoCDPluginGetParamsRequest is the body ArgoCD's ApplicationSet Plugin
 // generator sends to POST .../api/v1/getparams.execute. This service
 // ignores its contents - the active-appliance list doesn't depend on
-// anything the generator would pass in - but needs the field to exist so
-// huma doesn't reject the request body.
+// anything the generator would pass in - but needs both fields to exist
+// (including Input, which ArgoCD always sends alongside
+// ApplicationSetName) so huma's generated schema, which defaults to
+// additionalProperties: false, doesn't reject the request body with a 422.
 type ArgoCDPluginGetParamsRequest struct {
-	ApplicationSetName string `json:"applicationSetName,omitempty"`
+	ApplicationSetName string                 `json:"applicationSetName,omitempty"`
+	Input              map[string]interface{} `json:"input,omitempty"`
 }
 
 // ArgoCDPluginParameter is one entry of output.parameters in a Plugin
