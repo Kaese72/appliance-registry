@@ -87,8 +87,13 @@ func (app webApp) toApplianceResponse(a persistence.Appliance) restmodels.Applia
 	}
 }
 
+// tunnelURL is passed straight through to the appliance's chisel client as
+// its server address (see cloud-connect/client's tunnel supervisor). chisel
+// does its own http->ws / https->wss upgrade and only recognizes an "http"
+// prefix on the server address - handing it "wss://" directly breaks its
+// URL parsing (host ends up as the literal string "wss:").
 func (app webApp) tunnelURL(a persistence.Appliance) string {
-	return fmt.Sprintf("wss://%s/cloud-connect/v0/tunnel", app.hostname(a))
+	return fmt.Sprintf("https://%s/cloud-connect/v0/tunnel", app.hostname(a))
 }
 
 // requireOwningGroup fetches the Appliance and checks that it is owned by
