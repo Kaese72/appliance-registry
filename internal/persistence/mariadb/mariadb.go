@@ -148,3 +148,25 @@ func (m mariadbPersistence) DeleteClaimToken(ctx context.Context, applianceID in
 	_, err := m.db.ExecContext(ctx, `DELETE FROM applianceClaimTokens WHERE applianceId = ?`, applianceID)
 	return err
 }
+
+func (m mariadbPersistence) SaveEnrollExchangeCode(ctx context.Context, applianceID int64, codeHash string, claimTokenHash string, expiresAt time.Time) error {
+	_, err := m.db.ExecContext(ctx, `
+		INSERT INTO applianceEnrollExchangeCodes (applianceId, codeHash, claimTokenHash, expiresAt) VALUES (?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE codeHash = VALUES(codeHash), claimTokenHash = VALUES(claimTokenHash), expiresAt = VALUES(expiresAt), createdAt = CURRENT_TIMESTAMP`,
+		applianceID, codeHash, claimTokenHash, expiresAt)
+	return err
+}
+
+func (m mariadbPersistence) GetEnrollExchangeCode(ctx context.Context, applianceID int64) (persistence.EnrollExchangeCode, error) {
+	row := m.db.QueryRowContext(ctx, `SELECT applianceId, codeHash, claimTokenHash, expiresAt FROM applianceEnrollExchangeCodes WHERE applianceId = ?`, applianceID)
+	var ec persistence.EnrollExchangeCode
+	if err := row.Scan(&ec.ApplianceID, &ec.CodeHash, &ec.ClaimTokenHash, &ec.ExpiresAt); err != nil {
+		return persistence.EnrollExchangeCode{}, err
+	}
+	return ec, nil
+}
+
+func (m mariadbPersistence) DeleteEnrollExchangeCode(ctx context.Context, applianceID int64) error {
+	_, err := m.db.ExecContext(ctx, `DELETE FROM applianceEnrollExchangeCodes WHERE applianceId = ?`, applianceID)
+	return err
+}

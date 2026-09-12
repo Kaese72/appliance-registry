@@ -37,14 +37,15 @@ var pluginRateLimit = rate.Every(5 * time.Second)
 const pluginRateBurst = 2
 
 type webApp struct {
-	persistence      persistence.ApplianceRegistryDB
-	publicKey        *rsa.PublicKey
-	serviceTokens    []string
-	pluginTokens     []string
-	pluginLimiter    *rate.Limiter
-	claimTokenExpiry time.Duration
-	baseDomain       string
-	secretWriter     k8ssecrets.SecretWriter
+	persistence        persistence.ApplianceRegistryDB
+	publicKey          *rsa.PublicKey
+	serviceTokens      []string
+	pluginTokens       []string
+	pluginLimiter      *rate.Limiter
+	claimTokenExpiry   time.Duration
+	exchangeCodeExpiry time.Duration
+	baseDomain         string
+	secretWriter       k8ssecrets.SecretWriter
 }
 
 func NewWebApp(
@@ -53,18 +54,20 @@ func NewWebApp(
 	serviceTokens []string,
 	pluginTokens []string,
 	claimTokenExpiry time.Duration,
+	exchangeCodeExpiry time.Duration,
 	baseDomain string,
 	secretWriter k8ssecrets.SecretWriter,
 ) webApp {
 	return webApp{
-		persistence:      p,
-		publicKey:        publicKey,
-		serviceTokens:    serviceTokens,
-		pluginTokens:     pluginTokens,
-		pluginLimiter:    rate.NewLimiter(pluginRateLimit, pluginRateBurst),
-		claimTokenExpiry: claimTokenExpiry,
-		baseDomain:       baseDomain,
-		secretWriter:     secretWriter,
+		persistence:        p,
+		publicKey:          publicKey,
+		serviceTokens:      serviceTokens,
+		pluginTokens:       pluginTokens,
+		pluginLimiter:      rate.NewLimiter(pluginRateLimit, pluginRateBurst),
+		claimTokenExpiry:   claimTokenExpiry,
+		exchangeCodeExpiry: exchangeCodeExpiry,
+		baseDomain:         baseDomain,
+		secretWriter:       secretWriter,
 	}
 }
 
@@ -113,6 +116,42 @@ func (app webApp) requireOwningGroup(ctx context.Context, applianceID int64, gro
 	return a, nil
 }
 
+// createApplianceWithRetry inserts a new pending Appliance for groupID,
+// retrying with a freshly generated hostname label on a collision - shared
+// by Register and Enroll, which differ only in what credential they hand
+// back afterwards.
+func (app webApp) createApplianceWithRetry(ctx context.Context, name string, groupID int64) (persistence.Appliance, error) {
+	var appliance persistence.Appliance
+	for attempt := 0; ; attempt++ {
+		label, err := hostnames.GenerateLabel(name)
+		if err != nil {
+			return persistence.Appliance{}, err
+		}
+		appliance, err = app.persistence.CreateAppliance(ctx, name, label, groupID)
+		if err == nil {
+			return appliance, nil
+		}
+		if mysqlErr, ok := err.(*mysql.MySQLError); ok && mysqlErr.Number == 1062 && attempt < maxHostnameLabelAttempts-1 {
+			continue
+		}
+		return persistence.Appliance{}, err
+	}
+}
+
+// issueClaimToken generates and persists a fresh claim token for appliance,
+// replacing any existing one - shared by Register and Enroll.
+func (app webApp) issueClaimToken(ctx context.Context, applianceID int64) (rawToken string, hash string, expiresAt time.Time, err error) {
+	rawToken, hash, err = tokens.GenerateClaimToken()
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	expiresAt = time.Now().Add(app.claimTokenExpiry)
+	if err := app.persistence.SaveClaimToken(ctx, applianceID, hash, expiresAt); err != nil {
+		return "", "", time.Time{}, err
+	}
+	return rawToken, hash, expiresAt, nil
+}
+
 // Register creates a new pending Appliance owned by the caller's current
 // group and issues its one-time claim token - see the README's
 // "Registration".
@@ -127,31 +166,14 @@ func (app webApp) Register(ctx context.Context, input *struct {
 		return nil, huma.Error401Unauthorized("invalid or expired token")
 	}
 
-	var appliance persistence.Appliance
-	for attempt := 0; ; attempt++ {
-		label, err := hostnames.GenerateLabel(input.Body.Name)
-		if err != nil {
-			logging.ErrorErr(err, ctx)
-			return nil, huma.Error500InternalServerError("failed to allocate hostname")
-		}
-		appliance, err = app.persistence.CreateAppliance(ctx, input.Body.Name, label, groupID)
-		if err == nil {
-			break
-		}
-		if mysqlErr, ok := err.(*mysql.MySQLError); ok && mysqlErr.Number == 1062 && attempt < maxHostnameLabelAttempts-1 {
-			continue
-		}
+	appliance, err := app.createApplianceWithRetry(ctx, input.Body.Name, groupID)
+	if err != nil {
 		logging.ErrorErr(err, ctx)
 		return nil, huma.Error500InternalServerError("failed to register appliance")
 	}
 
-	rawToken, hash, err := tokens.GenerateClaimToken()
+	rawToken, _, expiresAt, err := app.issueClaimToken(ctx, appliance.ID)
 	if err != nil {
-		logging.ErrorErr(err, ctx)
-		return nil, huma.Error500InternalServerError("failed to generate claim token")
-	}
-	expiresAt := time.Now().Add(app.claimTokenExpiry)
-	if err := app.persistence.SaveClaimToken(ctx, appliance.ID, hash, expiresAt); err != nil {
 		logging.ErrorErr(err, ctx)
 		return nil, huma.Error500InternalServerError("failed to issue claim token")
 	}
@@ -163,6 +185,59 @@ func (app webApp) Register(ctx context.Context, input *struct {
 			ApplianceResponse:   app.toApplianceResponse(appliance),
 			ClaimToken:          rawToken,
 			ClaimTokenExpiresAt: expiresAt,
+		},
+	}, nil
+}
+
+// Enroll is the browser-facing counterpart to Register, used by cloud-ui's
+// enrollment redirect page (see the README's "Enrollment" section). It
+// registers a new pending Appliance exactly like Register, but instead of
+// handing the raw claim token back to the browser, it wraps it in a
+// short-lived, single-use exchange code: the browser never sees the claim
+// token, only the code, which it hands off to the appliance itself via the
+// return_to redirect. The appliance then redeems the code server-to-server
+// at EnrollRedeem.
+func (app webApp) Enroll(ctx context.Context, input *struct {
+	Authorization string `header:"Authorization"`
+	Body          restmodels.RegisterApplianceRequest
+}) (*struct {
+	Body restmodels.EnrollApplianceResponse
+}, error) {
+	_, groupID, err := tokens.FromAuthHeader(app.publicKey, input.Authorization)
+	if err != nil {
+		return nil, huma.Error401Unauthorized("invalid or expired token")
+	}
+
+	appliance, err := app.createApplianceWithRetry(ctx, input.Body.Name, groupID)
+	if err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to register appliance")
+	}
+
+	_, claimTokenHash, _, err := app.issueClaimToken(ctx, appliance.ID)
+	if err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to issue claim token")
+	}
+
+	rawCode, codeHash, err := tokens.GenerateExchangeCode()
+	if err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to generate exchange code")
+	}
+	expiresAt := time.Now().Add(app.exchangeCodeExpiry)
+	if err := app.persistence.SaveEnrollExchangeCode(ctx, appliance.ID, codeHash, claimTokenHash, expiresAt); err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to issue exchange code")
+	}
+
+	return &struct {
+		Body restmodels.EnrollApplianceResponse
+	}{
+		Body: restmodels.EnrollApplianceResponse{
+			ApplianceID:           appliance.ID,
+			ExchangeCode:          rawCode,
+			ExchangeCodeExpiresAt: expiresAt,
 		},
 	}, nil
 }
@@ -286,6 +361,101 @@ func (app webApp) Claim(ctx context.Context, input *struct {
 		// leftover row can no longer be used to re-claim it (the status
 		// check above would reject that), only to leak that this appliance
 		// exists - already true of any appliance id.
+	}
+
+	return &struct {
+		Body restmodels.ClaimApplianceResponse
+	}{
+		Body: restmodels.ClaimApplianceResponse{
+			ApplianceSecret: secret,
+			Hostname:        app.hostname(appliance),
+			TunnelURL:       app.tunnelURL(appliance),
+		},
+	}, nil
+}
+
+// EnrollRedeem is the server-to-server counterpart to Enroll, called once by
+// the appliance's own cloud-connect-client using the exchange code its
+// local UI received via the browser redirect (see the README's "Enrollment"
+// section). It performs exactly the same state transition as Claim -
+// generate the appliance secret, write it to k8s (still required: the
+// cloud-side cloud-connect-server reads it from there), mark the appliance
+// claimed - but authenticates with the exchange code instead of the claim
+// token, and additionally checks that the code's pinned claimTokenHash
+// still matches the appliance's live claim token, so a code can't be
+// redeemed after that claim token has been superseded (e.g. by a second
+// enroll attempt for the same appliance).
+func (app webApp) EnrollRedeem(ctx context.Context, input *struct {
+	Authorization string `header:"Authorization"`
+	ApplianceID   int64  `path:"applianceId"`
+}) (*struct {
+	Body restmodels.ClaimApplianceResponse
+}, error) {
+	rawCode, err := tokens.ClaimTokenFromAuthHeader(input.Authorization)
+	if err != nil {
+		return nil, huma.Error401Unauthorized("missing exchange code")
+	}
+	exchangeCode, err := app.persistence.GetEnrollExchangeCode(ctx, input.ApplianceID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, huma.Error401Unauthorized("invalid or expired exchange code")
+		}
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to look up exchange code")
+	}
+	if time.Now().After(exchangeCode.ExpiresAt) {
+		_ = app.persistence.DeleteEnrollExchangeCode(ctx, input.ApplianceID)
+		return nil, huma.Error401Unauthorized("invalid or expired exchange code")
+	}
+	if subtle.ConstantTimeCompare([]byte(tokens.HashExchangeCode(rawCode)), []byte(exchangeCode.CodeHash)) != 1 {
+		return nil, huma.Error401Unauthorized("invalid or expired exchange code")
+	}
+
+	claimToken, err := app.persistence.GetClaimToken(ctx, input.ApplianceID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, huma.Error401Unauthorized("invalid or expired exchange code")
+		}
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to look up claim token")
+	}
+	if subtle.ConstantTimeCompare([]byte(exchangeCode.ClaimTokenHash), []byte(claimToken.TokenHash)) != 1 {
+		return nil, huma.Error401Unauthorized("invalid or expired exchange code")
+	}
+
+	appliance, err := app.persistence.GetAppliance(ctx, input.ApplianceID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, huma.Error404NotFound("appliance not found")
+		}
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to look up appliance")
+	}
+	if appliance.Status != persistence.StatusPending {
+		return nil, huma.Error409Conflict("appliance has already been claimed")
+	}
+
+	secret, err := tokens.GenerateApplianceSecret(appliance.ID)
+	if err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to generate appliance secret")
+	}
+	if err := app.secretWriter.WriteApplianceSecret(ctx, appliance.ID, secret); err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to provision cloud-connect secret")
+	}
+	if err := app.persistence.MarkApplianceClaimed(ctx, appliance.ID); err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to mark appliance claimed")
+	}
+	if err := app.persistence.DeleteClaimToken(ctx, appliance.ID); err != nil {
+		logging.ErrorErr(err, ctx)
+		// Non-fatal - see the same comment in Claim.
+	}
+	if err := app.persistence.DeleteEnrollExchangeCode(ctx, appliance.ID); err != nil {
+		logging.ErrorErr(err, ctx)
+		// Non-fatal, for the same reason: the code is scoped to a now-active
+		// appliance and can no longer be used to re-redeem it.
 	}
 
 	return &struct {

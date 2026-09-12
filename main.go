@@ -45,6 +45,7 @@ func main() {
 
 	secretWriter := k8ssecrets.NewSecretWriter(config.Loaded.Kubernetes.Namespace)
 	claimTokenExpiry := time.Duration(config.Loaded.Auth.ClaimTokenExpiryMinutes) * time.Minute
+	exchangeCodeExpiry := time.Duration(config.Loaded.Auth.ExchangeCodeExpiryMinutes) * time.Minute
 
 	app := appliancewebapp.NewWebApp(
 		dbPersistence,
@@ -52,6 +53,7 @@ func main() {
 		tokens.ParseTokenList(config.Loaded.Auth.ServiceTokens),
 		tokens.ParseTokenList(config.Loaded.Auth.PluginTokens),
 		claimTokenExpiry,
+		exchangeCodeExpiry,
 		config.Loaded.Hostname.BaseDomain,
 		secretWriter,
 	)
@@ -64,7 +66,9 @@ func main() {
 
 	huma.Post(api, "/appliance-registry/v0/appliances", app.Register)
 	huma.Get(api, "/appliance-registry/v0/appliances", app.ListAppliances)
+	huma.Post(api, "/appliance-registry/v0/appliances/enroll", app.Enroll)
 	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/claim", app.Claim)
+	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/enroll/redeem", app.EnrollRedeem)
 	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/revoke", app.Revoke)
 	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/rotate", app.RotateSecret)
 	huma.Post(api, "/appliance-registry/v0/argocd-plugin/api/v1/getparams.execute", app.PluginGetParams)

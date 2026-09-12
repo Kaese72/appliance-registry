@@ -47,10 +47,11 @@ func (conf DatabaseConfig) Validate() error {
 // everywhere before removing the old one, instead of a single synchronized
 // cutover across this service and its callers' configuration.
 type AuthConfig struct {
-	UseTokenRSAPublicKeyPath string `json:"use-token-rsa-public-key-path" mapstructure:"use-token-rsa-public-key-path"`
-	ClaimTokenExpiryMinutes  int    `json:"claim-token-expiry-minutes" mapstructure:"claim-token-expiry-minutes"`
-	ServiceTokens            string `json:"service-tokens" mapstructure:"service-tokens"`
-	PluginTokens             string `json:"plugin-tokens" mapstructure:"plugin-tokens"`
+	UseTokenRSAPublicKeyPath  string `json:"use-token-rsa-public-key-path" mapstructure:"use-token-rsa-public-key-path"`
+	ClaimTokenExpiryMinutes   int    `json:"claim-token-expiry-minutes" mapstructure:"claim-token-expiry-minutes"`
+	ExchangeCodeExpiryMinutes int    `json:"exchange-code-expiry-minutes" mapstructure:"exchange-code-expiry-minutes"`
+	ServiceTokens             string `json:"service-tokens" mapstructure:"service-tokens"`
+	PluginTokens              string `json:"plugin-tokens" mapstructure:"plugin-tokens"`
 }
 
 func (conf AuthConfig) Validate() error {
@@ -137,6 +138,8 @@ func init() {
 	viper.BindEnv("auth.use-token-rsa-public-key-path")
 	viper.BindEnv("auth.claim-token-expiry-minutes")
 	viper.SetDefault("auth.claim-token-expiry-minutes", 60)
+	viper.BindEnv("auth.exchange-code-expiry-minutes")
+	viper.SetDefault("auth.exchange-code-expiry-minutes", 5)
 	viper.BindEnv("auth.service-tokens")
 	viper.BindEnv("auth.plugin-tokens")
 

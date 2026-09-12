@@ -38,6 +38,18 @@ type ClaimApplianceResponse struct {
 	TunnelURL       string `json:"tunnelUrl"`
 }
 
+// EnrollApplianceResponse is returned to the browser at the start of the
+// enrollment flow - see the README's "Enrollment" section. Unlike
+// RegisterApplianceResponse, it never carries the raw claim token: the
+// exchange code is a distinct, browser-scoped credential that only proves
+// "this browser session may cause the appliance to redeem the real claim
+// token", not the claim token itself.
+type EnrollApplianceResponse struct {
+	ApplianceID           int64     `json:"applianceId"`
+	ExchangeCode          string    `json:"exchangeCode"`
+	ExchangeCodeExpiresAt time.Time `json:"exchangeCodeExpiresAt"`
+}
+
 // ArgoCDPluginGetParamsRequest is the body ArgoCD's ApplicationSet Plugin
 // generator sends to POST .../api/v1/getparams.execute. This service
 // ignores its contents - the active-appliance list doesn't depend on

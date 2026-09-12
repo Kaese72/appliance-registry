@@ -47,6 +47,16 @@ type ClaimToken struct {
 	ExpiresAt   time.Time
 }
 
+// EnrollExchangeCode is the single-use, browser-facing credential described
+// in migrations/V002.sql. ClaimTokenHash pins it to the claim token that
+// existed at issuance time - see that migration's comment.
+type EnrollExchangeCode struct {
+	ApplianceID    int64
+	CodeHash       string
+	ClaimTokenHash string
+	ExpiresAt      time.Time
+}
+
 // ApplianceRegistryDB is the full persistence surface this service needs.
 // It is intentionally one interface rather than several small ones (unlike
 // cloud-user-registry's split) because every handler in this service
@@ -71,4 +81,11 @@ type ApplianceRegistryDB interface {
 	SaveClaimToken(ctx context.Context, applianceID int64, tokenHash string, expiresAt time.Time) error
 	GetClaimToken(ctx context.Context, applianceID int64) (ClaimToken, error)
 	DeleteClaimToken(ctx context.Context, applianceID int64) error
+
+	// SaveEnrollExchangeCode replaces any existing exchange code for
+	// applianceID, mirroring SaveClaimToken's re-issue-invalidates-prior
+	// behavior.
+	SaveEnrollExchangeCode(ctx context.Context, applianceID int64, codeHash string, claimTokenHash string, expiresAt time.Time) error
+	GetEnrollExchangeCode(ctx context.Context, applianceID int64) (EnrollExchangeCode, error)
+	DeleteEnrollExchangeCode(ctx context.Context, applianceID int64) error
 }

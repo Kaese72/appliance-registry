@@ -119,6 +119,25 @@ func ClaimTokenFromAuthHeader(authHeader string) (string, error) {
 	return bearerToken(authHeader)
 }
 
+// GenerateExchangeCode returns a fresh random enrollment exchange code and
+// the hash that should be persisted for it - the same shape as a claim
+// token (see GenerateClaimToken), but handed to the browser instead of the
+// appliance, and redeemed exactly once at
+// POST /appliances/{id}/enroll/redeem.
+func GenerateExchangeCode() (raw string, hash string, err error) {
+	buf := make([]byte, 32)
+	if _, err = rand.Read(buf); err != nil {
+		return "", "", err
+	}
+	raw = hex.EncodeToString(buf)
+	return raw, HashExchangeCode(raw), nil
+}
+
+func HashExchangeCode(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
 // ParseTokenList splits a comma-separated config value into the set of
 // currently-valid tokens, trimming whitespace and dropping empty entries.
 // Supporting more than one valid value at a time is what lets a token be

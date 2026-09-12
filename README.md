@@ -104,16 +104,56 @@ and receives back:
 
 The claim token is invalidated immediately after a successful claim (or on
 expiry, whichever comes first), and the **Appliance** moves to `active`.
-The response is written into the appliance's own cluster as the
-`cloud-connect-secret` Secret and `cloud-connect-configmap` ConfigMap
-consumed by `cloud-connect-client` (see cloud-connect's README) — this
-replaces the manual `kubectl create secret` step on the appliance side for
-any appliance that goes through this flow.
+This service only ever writes the generated secret into its own (cloud)
+cluster, as `cloud-connect-secret-<id>` — see "Cloud-side
+cloud-connect-server provisioning" below. It has no access to the
+appliance's own cluster, so the response body (secret, hostname, tunnel URL)
+is the only place the appliance side ever sees the secret; something on the
+appliance itself is responsible for persisting it locally. Historically that
+was a manual operator step (`kubectl create secret` on the appliance
+cluster, using the values from this response) — see "Enrollment" below for
+the flow that replaces that manual step.
 
 A claim can only succeed once. A lost/expired claim token, or an appliance
 stuck in `pending` for too long, is handled by an administrator re-issuing
 a new claim token for the same **Appliance** (invalidating any prior one)
 rather than by the appliance retrying indefinitely.
+
+### Enrollment
+
+**Enrollment** is the human-friendly, redirect-driven alternative to
+Registration + Claiming above, used by `cloud-connect-client`'s "Connect to
+Cloud" flow (see cloud-connect's README). It reuses the same underlying
+state machine — a `pending` **Appliance** plus a **Claim token** — but never
+exposes the claim token to a browser:
+
+```
+POST /appliance-registry/v0/appliances/enroll
+Authorization: Bearer <use token>
+```
+
+Called from the cloud UI once the user is authenticated. It registers a new
+**Appliance** exactly like Registration, but instead of returning the raw
+claim token, it wraps it in a short-lived, single-use **exchange code** and
+returns `{applianceId, exchangeCode, exchangeCodeExpiresAt}`. The browser is
+then redirected back to the appliance's own local UI with that code (and the
+appliance id) in the URL — the appliance never trusted with more than that.
+
+The appliance's own `cloud-connect-client` redeems the code itself,
+server-to-server, independent of the tunnel (which doesn't exist yet):
+
+```
+POST /appliance-registry/v0/appliances/{id}/enroll/redeem
+Authorization: Bearer <exchange code>
+```
+
+This performs the same state transition as Claiming (generate the
+**Appliance secret**, write the cloud-side Secret, mark the **Appliance**
+`active`) and returns the same response shape Claiming does. The exchange
+code is checked against the claim token that was live when it was issued, so
+it can't be redeemed after that claim token has been superseded (e.g. a
+second enrollment attempt for the same appliance) — and, like a claim token,
+it is single-use and short-lived.
 
 ### Cloud-side cloud-connect-server provisioning
 
