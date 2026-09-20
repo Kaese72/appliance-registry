@@ -244,9 +244,11 @@ are applied in the database query.
 * REST API under `/appliance-registry/v0/...`.
 * Three distinct caller types, three distinct auth mechanisms — nothing is
   left unauthenticated:
-  * **A logged-in user** (register/list/revoke/rotate) — a `use` JWT,
-    verified against authentication service's public key, carrying the
-    group id. Every call is further authorized against that group id
+  * **A logged-in user** (register/list/revoke/rotate) — a `use` JWT
+    issued by cloud-user-registry, carrying the user and group id. It is
+    verified against cloud-user-registry's public key using that service's
+    public `cloudtoken` package (`cloudtoken.FromAuthHeader`), so the token
+    format is defined in one place rather than re-implemented here. Every call is further authorized against that group id
     matching the target **Appliance**'s owning Group (see "Revocation /
     rotation" above) — the JWT alone proves *who*, not *allowed to touch
     this appliance*.

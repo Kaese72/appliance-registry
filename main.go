@@ -13,6 +13,7 @@ import (
 	"github.com/Kaese72/appliance-registry/internal/logging"
 	"github.com/Kaese72/appliance-registry/internal/persistence/mariadb"
 	"github.com/Kaese72/appliance-registry/internal/tokens"
+	"github.com/Kaese72/cloud-user-registry/cloudtoken"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humamux"
 	"github.com/gorilla/mux"
@@ -32,14 +33,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	keyBytes, err := os.ReadFile(config.Loaded.Auth.UseTokenRSAPublicKeyPath)
+	publicKey, err := cloudtoken.LoadPublicKeyFromFile(config.Loaded.Auth.UseTokenRSAPublicKeyPath)
 	if err != nil {
-		logging.Error("failed to read RSA public key: "+err.Error(), context.Background())
-		os.Exit(1)
-	}
-	publicKey, err := tokens.LoadRSAPublicKey(keyBytes)
-	if err != nil {
-		logging.Error("failed to parse RSA public key: "+err.Error(), context.Background())
+		logging.Error("failed to load RSA public key: "+err.Error(), context.Background())
 		os.Exit(1)
 	}
 

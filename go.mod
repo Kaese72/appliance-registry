@@ -3,10 +3,11 @@ module github.com/Kaese72/appliance-registry
 go 1.26.0
 
 require (
+	github.com/Kaese72/cloud-user-registry v0.0.6
 	github.com/Kaese72/huemie-lib v0.0.6
 	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/go-sql-driver/mysql v1.10.0
-	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/gorilla/mux v1.8.1
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/viper v1.21.0

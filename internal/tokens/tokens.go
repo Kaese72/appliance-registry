@@ -1,8 +1,10 @@
 // Package tokens implements the authentication mechanisms this service
 // uses - see the README's "Architecture" section:
 //
-//   - use tokens: RS256 JWTs issued by cloud-user-registry, verified here
-//     against its public key. This service never issues these itself.
+//   - use tokens: RS256 JWTs issued by cloud-user-registry. Their format is
+//     owned by that service's public cloudtoken package, which this service
+//     imports to verify them (see cloudtoken.FromAuthHeader); nothing here
+//     parses or issues one.
 //   - claim tokens: single-use, appliance-scoped bootstrap secrets this
 //     service generates and hands out exactly once at registration time.
 //   - service tokens: static shared secrets for machine callers. There are
@@ -18,74 +20,14 @@ package tokens
 
 import (
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/subtle"
-	"crypto/x509"
 	"encoding/hex"
-	"encoding/pem"
 	"fmt"
 	"strings"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/pkg/errors"
 )
-
-// LoadRSAPublicKey decodes a PKIX PEM-encoded RSA public key, as produced
-// by cloud-user-registry's own key pair - it's this service's counterpart
-// to that service's ParseRSAPrivateKey.
-func LoadRSAPublicKey(pemBytes []byte) (*rsa.PublicKey, error) {
-	block, _ := pem.Decode(pemBytes)
-	if block == nil {
-		return nil, errors.New("failed to decode PEM block")
-	}
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-	rsaPub, ok := pub.(*rsa.PublicKey)
-	if !ok {
-		return nil, errors.New("PEM block does not contain an RSA public key")
-	}
-	return rsaPub, nil
-}
-
-// ValidateUseToken verifies the RS256 signature of a cloud-user-registry use
-// token and returns the userId and groupId embedded in it.
-func ValidateUseToken(publicKey *rsa.PublicKey, tokenString string) (userID int64, groupID int64, err error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return publicKey, nil
-	})
-	if err != nil {
-		return 0, 0, err
-	}
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok || !token.Valid {
-		return 0, 0, errors.New("invalid token")
-	}
-	idFloat, ok := claims["id"].(float64)
-	if !ok {
-		return 0, 0, errors.New("invalid id claim")
-	}
-	groupIDFloat, ok := claims["groupId"].(float64)
-	if !ok {
-		return 0, 0, errors.New("invalid groupId claim")
-	}
-	return int64(idFloat), int64(groupIDFloat), nil
-}
-
-// FromAuthHeader validates the bearer use token in an "Authorization" header
-// value and returns the userId and groupId embedded in it.
-func FromAuthHeader(publicKey *rsa.PublicKey, authHeader string) (userID int64, groupID int64, err error) {
-	tokenString, err := bearerToken(authHeader)
-	if err != nil {
-		return 0, 0, err
-	}
-	return ValidateUseToken(publicKey, tokenString)
-}
 
 func bearerToken(authHeader string) (string, error) {
 	if !strings.HasPrefix(authHeader, "Bearer ") {

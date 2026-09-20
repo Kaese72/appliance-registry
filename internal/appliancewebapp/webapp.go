@@ -15,6 +15,7 @@ import (
 	"github.com/Kaese72/appliance-registry/internal/persistence"
 	"github.com/Kaese72/appliance-registry/internal/tokens"
 	"github.com/Kaese72/appliance-registry/restmodels"
+	"github.com/Kaese72/cloud-user-registry/cloudtoken"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-sql-driver/mysql"
 	"golang.org/x/time/rate"
@@ -166,7 +167,7 @@ func (app webApp) Register(ctx context.Context, input *struct {
 }) (*struct {
 	Body restmodels.RegisterApplianceResponse
 }, error) {
-	_, groupID, err := tokens.FromAuthHeader(app.publicKey, input.Authorization)
+	_, groupID, err := cloudtoken.FromAuthHeader(app.publicKey, input.Authorization)
 	if err != nil {
 		return nil, huma.Error401Unauthorized("invalid or expired token")
 	}
@@ -208,7 +209,7 @@ func (app webApp) Enroll(ctx context.Context, input *struct {
 }) (*struct {
 	Body restmodels.EnrollApplianceResponse
 }, error) {
-	_, groupID, err := tokens.FromAuthHeader(app.publicKey, input.Authorization)
+	_, groupID, err := cloudtoken.FromAuthHeader(app.publicKey, input.Authorization)
 	if err != nil {
 		return nil, huma.Error401Unauthorized("invalid or expired token")
 	}
@@ -275,7 +276,7 @@ func (app webApp) ListAppliances(ctx context.Context, input *struct {
 		return app.applianceListResponse(appliances), nil
 	}
 
-	_, groupID, err := tokens.FromAuthHeader(app.publicKey, input.Authorization)
+	_, groupID, err := cloudtoken.FromAuthHeader(app.publicKey, input.Authorization)
 	if err != nil {
 		return nil, huma.Error401Unauthorized("invalid or expired token")
 	}
@@ -476,7 +477,7 @@ func (app webApp) Revoke(ctx context.Context, input *struct {
 	Authorization string `header:"Authorization"`
 	ApplianceID   int64  `path:"applianceId"`
 }) (*struct{}, error) {
-	_, groupID, err := tokens.FromAuthHeader(app.publicKey, input.Authorization)
+	_, groupID, err := cloudtoken.FromAuthHeader(app.publicKey, input.Authorization)
 	if err != nil {
 		return nil, huma.Error401Unauthorized("invalid or expired token")
 	}
@@ -505,7 +506,7 @@ func (app webApp) RotateSecret(ctx context.Context, input *struct {
 }) (*struct {
 	Body restmodels.ClaimApplianceResponse
 }, error) {
-	_, groupID, err := tokens.FromAuthHeader(app.publicKey, input.Authorization)
+	_, groupID, err := cloudtoken.FromAuthHeader(app.publicKey, input.Authorization)
 	if err != nil {
 		return nil, huma.Error401Unauthorized("invalid or expired token")
 	}
