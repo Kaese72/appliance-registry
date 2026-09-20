@@ -111,6 +111,20 @@ func CheckServiceTokens(validTokens []string, authHeader string) error {
 	return errors.New("invalid service token")
 }
 
+// ApplianceSecretFromAuthHeader extracts the raw bearer appliance secret from
+// an "Authorization" header value.
+func ApplianceSecretFromAuthHeader(authHeader string) (string, error) {
+	return bearerToken(authHeader)
+}
+
+// HashApplianceSecret returns the value persisted so an appliance's secret can
+// be verified later without storing it. The secret is 192 bits of randomness,
+// so a plain SHA-256 is sufficient (no need for a slow password hash).
+func HashApplianceSecret(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
 // GenerateApplianceSecret returns a fresh random cloud-connect shared
 // secret ("auth" value, in chisel's "user:pass" shape) for an appliance -
 // see the README's "Appliance secret" model.

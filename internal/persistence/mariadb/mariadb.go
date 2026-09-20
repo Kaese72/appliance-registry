@@ -180,3 +180,59 @@ func (m mariadbPersistence) DeleteEnrollExchangeCode(ctx context.Context, applia
 	_, err := m.db.ExecContext(ctx, `DELETE FROM applianceEnrollExchangeCodes WHERE applianceId = ?`, applianceID)
 	return err
 }
+
+func (m mariadbPersistence) SetApplianceSecretHash(ctx context.Context, applianceID int64, hash *string) error {
+	result, err := m.db.ExecContext(ctx, `UPDATE appliances SET secretHash = ? WHERE id = ?`, hash, applianceID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		// RowsAffected is 0 both for a missing row and for an update that
+		// changes nothing, so tell the two apart.
+		var exists int
+		if err := m.db.QueryRowContext(ctx, `SELECT 1 FROM appliances WHERE id = ?`, applianceID).Scan(&exists); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m mariadbPersistence) GetApplianceSecretHash(ctx context.Context, applianceID int64) (string, error) {
+	var hash sql.NullString
+	if err := m.db.QueryRowContext(ctx, `SELECT secretHash FROM appliances WHERE id = ?`, applianceID).Scan(&hash); err != nil {
+		return "", err
+	}
+	return hash.String, nil
+}
+
+func (m mariadbPersistence) SaveLoginCode(ctx context.Context, codeHash string, applianceID int64, userID int64, expiresAt time.Time) error {
+	if _, err := m.db.ExecContext(ctx, `DELETE FROM applianceLoginCodes WHERE expiresAt < ?`, time.Now().UTC()); err != nil {
+		return err
+	}
+	_, err := m.db.ExecContext(ctx, `INSERT INTO applianceLoginCodes (codeHash, applianceId, userId, expiresAt) VALUES (?, ?, ?, ?)`, codeHash, applianceID, userID, expiresAt)
+	return err
+}
+
+func (m mariadbPersistence) ConsumeLoginCode(ctx context.Context, codeHash string, applianceID int64) (persistence.LoginCode, error) {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return persistence.LoginCode{}, err
+	}
+	defer tx.Rollback()
+	var lc persistence.LoginCode
+	row := tx.QueryRowContext(ctx, `SELECT codeHash, applianceId, userId, expiresAt FROM applianceLoginCodes WHERE codeHash = ? AND applianceId = ? FOR UPDATE`, codeHash, applianceID)
+	if err := row.Scan(&lc.CodeHash, &lc.ApplianceID, &lc.UserID, &lc.ExpiresAt); err != nil {
+		return persistence.LoginCode{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applianceLoginCodes WHERE codeHash = ?`, codeHash); err != nil {
+		return persistence.LoginCode{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return persistence.LoginCode{}, err
+	}
+	return lc, nil
+}

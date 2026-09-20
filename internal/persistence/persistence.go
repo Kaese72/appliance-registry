@@ -57,6 +57,15 @@ type EnrollExchangeCode struct {
 	ExpiresAt      time.Time
 }
 
+// LoginCode is the single-use credential issued to a browser when a cloud
+// user logs in to an appliance - see migrations/V003.sql.
+type LoginCode struct {
+	CodeHash    string
+	ApplianceID int64
+	UserID      int64
+	ExpiresAt   time.Time
+}
+
 // ApplianceFilter narrows ListAppliancesForGroup. A non-empty Status matches
 // only that status (and takes precedence over IncludeRevoked); otherwise
 // revoked appliances are omitted unless IncludeRevoked is set.
@@ -96,4 +105,19 @@ type ApplianceRegistryDB interface {
 	SaveEnrollExchangeCode(ctx context.Context, applianceID int64, codeHash string, claimTokenHash string, expiresAt time.Time) error
 	GetEnrollExchangeCode(ctx context.Context, applianceID int64) (EnrollExchangeCode, error)
 	DeleteEnrollExchangeCode(ctx context.Context, applianceID int64) error
+
+	// SetApplianceSecretHash stores (or, with nil, clears) the hash of the
+	// appliance's current secret.
+	SetApplianceSecretHash(ctx context.Context, applianceID int64, hash *string) error
+	// GetApplianceSecretHash returns the stored secret hash, or "" if the
+	// appliance has none.
+	GetApplianceSecretHash(ctx context.Context, applianceID int64) (string, error)
+
+	// SaveLoginCode stores a new login code. Expired codes are pruned as a
+	// side effect.
+	SaveLoginCode(ctx context.Context, codeHash string, applianceID int64, userID int64, expiresAt time.Time) error
+	// ConsumeLoginCode atomically returns and deletes the code for
+	// applianceID, or sql.ErrNoRows if there is none. It does not check
+	// expiry; the caller must.
+	ConsumeLoginCode(ctx context.Context, codeHash string, applianceID int64) (LoginCode, error)
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/Kaese72/appliance-registry/internal/logging"
 	"github.com/Kaese72/appliance-registry/internal/persistence/mariadb"
 	"github.com/Kaese72/appliance-registry/internal/tokens"
+	"github.com/Kaese72/appliance-registry/internal/userregistry"
 	"github.com/Kaese72/cloud-user-registry/cloudtoken"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humamux"
@@ -52,6 +53,7 @@ func main() {
 		exchangeCodeExpiry,
 		config.Loaded.Hostname.BaseDomain,
 		secretWriter,
+		userregistry.NewClient(config.Loaded.UserRegistry.BaseURL, config.Loaded.UserRegistry.ServiceToken),
 	)
 
 	router := mux.NewRouter()
@@ -65,6 +67,9 @@ func main() {
 	huma.Post(api, "/appliance-registry/v0/appliances/enroll", app.Enroll)
 	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/claim", app.Claim)
 	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/enroll/redeem", app.EnrollRedeem)
+	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/login-code", app.CreateLoginCode)
+	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/login-code/redeem", app.RedeemLoginCode)
+	huma.Get(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/access/{userId:[0-9]+}", app.CheckAccess)
 	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/revoke", app.Revoke)
 	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/rotate", app.RotateSecret)
 	huma.Post(api, "/appliance-registry/v0/argocd-plugin/api/v1/getparams.execute", app.PluginGetParams)

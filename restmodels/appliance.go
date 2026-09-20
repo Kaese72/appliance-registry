@@ -50,6 +50,34 @@ type EnrollApplianceResponse struct {
 	ExchangeCodeExpiresAt time.Time `json:"exchangeCodeExpiresAt"`
 }
 
+// LoginCodeResponse is returned to the browser by the cloud-login redirect
+// step - see the README's "Cloud login" section. The code is single-use and
+// short-lived, and only the appliance, presenting its secret, can redeem it.
+type LoginCodeResponse struct {
+	Code      string    `json:"code"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+type RedeemLoginCodeRequest struct {
+	Code string `json:"code" minLength:"1"`
+}
+
+// CloudUserResponse is the cloud identity an appliance learns by redeeming a
+// login code.
+type CloudUserResponse struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Name     string `json:"name"`
+	Surname  string `json:"surname"`
+	Email    string `json:"email"`
+}
+
+// ApplianceAccessResponse tells an appliance whether a cloud user may still
+// access it.
+type ApplianceAccessResponse struct {
+	Allowed bool `json:"allowed"`
+}
+
 // ArgoCDPluginGetParamsRequest is the body ArgoCD's ApplicationSet Plugin
 // generator sends to POST .../api/v1/getparams.execute. This service
 // ignores its contents - the active-appliance list doesn't depend on

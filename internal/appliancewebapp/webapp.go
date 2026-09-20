@@ -14,6 +14,7 @@ import (
 	"github.com/Kaese72/appliance-registry/internal/logging"
 	"github.com/Kaese72/appliance-registry/internal/persistence"
 	"github.com/Kaese72/appliance-registry/internal/tokens"
+	"github.com/Kaese72/appliance-registry/internal/userregistry"
 	"github.com/Kaese72/appliance-registry/restmodels"
 	"github.com/Kaese72/cloud-user-registry/cloudtoken"
 	"github.com/danielgtaylor/huma/v2"
@@ -47,6 +48,7 @@ type webApp struct {
 	exchangeCodeExpiry time.Duration
 	baseDomain         string
 	secretWriter       k8ssecrets.SecretWriter
+	userRegistry       userregistry.Client
 }
 
 func NewWebApp(
@@ -58,6 +60,7 @@ func NewWebApp(
 	exchangeCodeExpiry time.Duration,
 	baseDomain string,
 	secretWriter k8ssecrets.SecretWriter,
+	userRegistry userregistry.Client,
 ) webApp {
 	return webApp{
 		persistence:        p,
@@ -69,7 +72,49 @@ func NewWebApp(
 		exchangeCodeExpiry: exchangeCodeExpiry,
 		baseDomain:         baseDomain,
 		secretWriter:       secretWriter,
+		userRegistry:       userRegistry,
 	}
+}
+
+// storeSecretHash records the hash of a freshly generated appliance secret so
+// the appliance can later authenticate itself - see authenticateAppliance.
+func (app webApp) storeSecretHash(ctx context.Context, applianceID int64, secret string) error {
+	hash := tokens.HashApplianceSecret(secret)
+	return app.persistence.SetApplianceSecretHash(ctx, applianceID, &hash)
+}
+
+// authenticateAppliance verifies that the request's bearer token is the
+// current secret of the appliance named in the path, and that the appliance is
+// active. Every failure is reported as 401 so the endpoint doesn't reveal
+// whether an appliance id exists or what state it is in.
+func (app webApp) authenticateAppliance(ctx context.Context, applianceID int64, authHeader string) (persistence.Appliance, error) {
+	secret, err := tokens.ApplianceSecretFromAuthHeader(authHeader)
+	if err != nil {
+		return persistence.Appliance{}, huma.Error401Unauthorized("missing appliance secret")
+	}
+	stored, err := app.persistence.GetApplianceSecretHash(ctx, applianceID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return persistence.Appliance{}, huma.Error401Unauthorized("invalid appliance secret")
+		}
+		logging.ErrorErr(err, ctx)
+		return persistence.Appliance{}, huma.Error500InternalServerError("failed to look up appliance secret")
+	}
+	if stored == "" || subtle.ConstantTimeCompare([]byte(tokens.HashApplianceSecret(secret)), []byte(stored)) != 1 {
+		return persistence.Appliance{}, huma.Error401Unauthorized("invalid appliance secret")
+	}
+	appliance, err := app.persistence.GetAppliance(ctx, applianceID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return persistence.Appliance{}, huma.Error401Unauthorized("invalid appliance secret")
+		}
+		logging.ErrorErr(err, ctx)
+		return persistence.Appliance{}, huma.Error500InternalServerError("failed to look up appliance")
+	}
+	if appliance.Status != persistence.StatusActive {
+		return persistence.Appliance{}, huma.Error401Unauthorized("invalid appliance secret")
+	}
+	return appliance, nil
 }
 
 func (app webApp) hostname(a persistence.Appliance) string {
@@ -353,6 +398,10 @@ func (app webApp) Claim(ctx context.Context, input *struct {
 		logging.ErrorErr(err, ctx)
 		return nil, huma.Error500InternalServerError("failed to provision cloud-connect secret")
 	}
+	if err := app.storeSecretHash(ctx, appliance.ID, secret); err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to persist appliance secret hash")
+	}
 	if err := app.persistence.MarkApplianceClaimed(ctx, appliance.ID); err != nil {
 		logging.ErrorErr(err, ctx)
 		return nil, huma.Error500InternalServerError("failed to mark appliance claimed")
@@ -446,6 +495,10 @@ func (app webApp) EnrollRedeem(ctx context.Context, input *struct {
 		logging.ErrorErr(err, ctx)
 		return nil, huma.Error500InternalServerError("failed to provision cloud-connect secret")
 	}
+	if err := app.storeSecretHash(ctx, appliance.ID, secret); err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to persist appliance secret hash")
+	}
 	if err := app.persistence.MarkApplianceClaimed(ctx, appliance.ID); err != nil {
 		logging.ErrorErr(err, ctx)
 		return nil, huma.Error500InternalServerError("failed to mark appliance claimed")
@@ -493,8 +546,124 @@ func (app webApp) Revoke(ctx context.Context, input *struct {
 		logging.ErrorErr(err, ctx)
 		return nil, huma.Error500InternalServerError("failed to remove cloud-connect secret")
 	}
+	if err := app.persistence.SetApplianceSecretHash(ctx, appliance.ID, nil); err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to clear appliance secret hash")
+	}
 	_ = app.persistence.DeleteClaimToken(ctx, appliance.ID)
 	return &struct{}{}, nil
+}
+
+// CreateLoginCode is the browser-facing first leg of cloud login, called from
+// cloud-ui's appliance-login redirect page once the user is authenticated. It
+// issues a short-lived, single-use login code if - and only if - the caller's
+// use token carries the appliance's owning group, i.e. the caller is a member
+// of that group. The browser then carries the code to the appliance, which
+// redeems it server-to-server at RedeemLoginCode.
+func (app webApp) CreateLoginCode(ctx context.Context, input *struct {
+	Authorization string `header:"Authorization"`
+	ApplianceID   int64  `path:"applianceId"`
+}) (*struct {
+	Body restmodels.LoginCodeResponse
+}, error) {
+	userID, groupID, err := cloudtoken.FromAuthHeader(app.publicKey, input.Authorization)
+	if err != nil {
+		return nil, huma.Error401Unauthorized("invalid or expired token")
+	}
+	appliance, err := app.requireOwningGroup(ctx, input.ApplianceID, groupID)
+	if err != nil {
+		return nil, err
+	}
+	if appliance.Status != persistence.StatusActive {
+		return nil, huma.Error409Conflict("appliance is not active")
+	}
+	rawCode, codeHash, err := tokens.GenerateExchangeCode()
+	if err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to generate login code")
+	}
+	expiresAt := time.Now().Add(app.exchangeCodeExpiry)
+	if err := app.persistence.SaveLoginCode(ctx, codeHash, appliance.ID, userID, expiresAt); err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to issue login code")
+	}
+	return &struct {
+		Body restmodels.LoginCodeResponse
+	}{Body: restmodels.LoginCodeResponse{Code: rawCode, ExpiresAt: expiresAt}}, nil
+}
+
+// RedeemLoginCode is the server-to-server second leg of cloud login, called
+// by the appliance itself, authenticating with its appliance secret. It
+// consumes the login code, re-verifies the user is still a member of the
+// appliance's owning group, and returns their cloud identity. The code alone
+// is useless without the secret, so leaking it through the browser redirect
+// does not let anyone else log in.
+func (app webApp) RedeemLoginCode(ctx context.Context, input *struct {
+	Authorization string `header:"Authorization"`
+	ApplianceID   int64  `path:"applianceId"`
+	Body          restmodels.RedeemLoginCodeRequest
+}) (*struct {
+	Body restmodels.CloudUserResponse
+}, error) {
+	appliance, err := app.authenticateAppliance(ctx, input.ApplianceID, input.Authorization)
+	if err != nil {
+		return nil, err
+	}
+	code, err := app.persistence.ConsumeLoginCode(ctx, tokens.HashExchangeCode(input.Body.Code), appliance.ID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, huma.Error401Unauthorized("invalid or expired login code")
+		}
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to look up login code")
+	}
+	if time.Now().After(code.ExpiresAt) {
+		return nil, huma.Error401Unauthorized("invalid or expired login code")
+	}
+	access, err := app.userRegistry.GetGroupMember(ctx, appliance.GroupID, code.UserID)
+	if err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error502BadGateway("failed to verify group membership")
+	}
+	if !access.IsMember || access.User == nil {
+		return nil, huma.Error403Forbidden("user no longer has access to this appliance")
+	}
+	return &struct {
+		Body restmodels.CloudUserResponse
+	}{Body: restmodels.CloudUserResponse{
+		ID:       access.User.ID,
+		Username: access.User.Username,
+		Name:     access.User.Name,
+		Surname:  access.User.Surname,
+		Email:    access.User.Email,
+	}}, nil
+}
+
+// CheckAccess lets an appliance ask whether a cloud user who logged in
+// earlier still has access to it - the appliance calls this whenever it is
+// asked to refresh that user's session. A user has access iff the appliance is
+// active and they are still a member of its owning group. An authentication
+// failure (rotated or revoked secret) is a 401 rather than allowed=false, so
+// the appliance can tell "denied" from "my credentials are stale".
+func (app webApp) CheckAccess(ctx context.Context, input *struct {
+	Authorization string `header:"Authorization"`
+	ApplianceID   int64  `path:"applianceId"`
+	UserID        int64  `path:"userId"`
+}) (*struct {
+	Body restmodels.ApplianceAccessResponse
+}, error) {
+	appliance, err := app.authenticateAppliance(ctx, input.ApplianceID, input.Authorization)
+	if err != nil {
+		return nil, err
+	}
+	access, err := app.userRegistry.GetGroupMember(ctx, appliance.GroupID, input.UserID)
+	if err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error502BadGateway("failed to verify group membership")
+	}
+	return &struct {
+		Body restmodels.ApplianceAccessResponse
+	}{Body: restmodels.ApplianceAccessResponse{Allowed: access.IsMember}}, nil
 }
 
 // RotateSecret generates a fresh Appliance secret without changing the
@@ -525,6 +694,10 @@ func (app webApp) RotateSecret(ctx context.Context, input *struct {
 	if err := app.secretWriter.WriteApplianceSecret(ctx, appliance.ID, secret); err != nil {
 		logging.ErrorErr(err, ctx)
 		return nil, huma.Error500InternalServerError("failed to provision cloud-connect secret")
+	}
+	if err := app.storeSecretHash(ctx, appliance.ID, secret); err != nil {
+		logging.ErrorErr(err, ctx)
+		return nil, huma.Error500InternalServerError("failed to persist appliance secret hash")
 	}
 	return &struct {
 		Body restmodels.ClaimApplianceResponse

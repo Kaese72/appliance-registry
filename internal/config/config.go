@@ -67,6 +67,23 @@ func (conf AuthConfig) Validate() error {
 	return nil
 }
 
+// UserRegistryConfig points at cloud-user-registry's internal membership
+// endpoint. ServiceToken must be one of that service's auth service-tokens.
+type UserRegistryConfig struct {
+	BaseURL      string `json:"base-url" mapstructure:"base-url"`
+	ServiceToken string `json:"service-token" mapstructure:"service-token"`
+}
+
+func (conf UserRegistryConfig) Validate() error {
+	if conf.BaseURL == "" {
+		return errors.New("must supply user-registry base-url")
+	}
+	if conf.ServiceToken == "" {
+		return errors.New("must supply user-registry service-token")
+	}
+	return nil
+}
+
 // HostnameConfig controls how appliance hostnames are allocated. Every
 // appliance is reachable at <label>.<BaseDomain> once claimed - see the
 // README's "Appliance" model.
@@ -98,11 +115,12 @@ func (conf KubernetesConfig) Validate() error {
 }
 
 type Config struct {
-	Database   DatabaseConfig   `json:"database" mapstructure:"database"`
-	Auth       AuthConfig       `json:"auth" mapstructure:"auth"`
-	Hostname   HostnameConfig   `json:"hostname" mapstructure:"hostname"`
-	Kubernetes KubernetesConfig `json:"kubernetes" mapstructure:"kubernetes"`
-	Port       int              `json:"port" mapstructure:"port"`
+	Database     DatabaseConfig     `json:"database" mapstructure:"database"`
+	Auth         AuthConfig         `json:"auth" mapstructure:"auth"`
+	UserRegistry UserRegistryConfig `json:"user-registry" mapstructure:"user-registry"`
+	Hostname     HostnameConfig     `json:"hostname" mapstructure:"hostname"`
+	Kubernetes   KubernetesConfig   `json:"kubernetes" mapstructure:"kubernetes"`
+	Port         int                `json:"port" mapstructure:"port"`
 }
 
 func (conf Config) Validate() error {
@@ -110,6 +128,9 @@ func (conf Config) Validate() error {
 		return err
 	}
 	if err := conf.Auth.Validate(); err != nil {
+		return err
+	}
+	if err := conf.UserRegistry.Validate(); err != nil {
 		return err
 	}
 	if err := conf.Hostname.Validate(); err != nil {
@@ -142,6 +163,9 @@ func init() {
 	viper.SetDefault("auth.exchange-code-expiry-minutes", 5)
 	viper.BindEnv("auth.service-tokens")
 	viper.BindEnv("auth.plugin-tokens")
+
+	viper.BindEnv("user-registry.base-url")
+	viper.BindEnv("user-registry.service-token")
 
 	viper.BindEnv("hostname.base-domain")
 	viper.SetDefault("hostname.base-domain", "appliance.humi.kaese.space")

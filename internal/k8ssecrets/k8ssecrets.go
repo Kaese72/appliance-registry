@@ -1,9 +1,11 @@
 // Package k8ssecrets writes/deletes the cloud-connect-secret-<id> Secret
 // each claimed Appliance needs on the cloud side - see the README's
 // "Cloud-side cloud-connect-server provisioning" section. Secret material
-// is written directly via the Kubernetes API and never stored in this
-// service's own database, so this is the only place that value exists once
-// the claim/rotate response has been sent.
+// is written directly via the Kubernetes API and the raw value is never
+// stored in this service's own database (only a hash of it is, so the
+// appliance can authenticate to this service - see the README's "Appliance
+// secret"), so this is the only place the raw value exists once the
+// claim/rotate response has been sent.
 package k8ssecrets
 
 import (
