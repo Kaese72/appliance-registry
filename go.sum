@@ -1,6 +1,8 @@
 filippo.io/edwards25519 v1.2.0 h1:crnVqOiS4jqYleHd9vaKZ+HKtHfllngJIiOpNpoJsjo=
 filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q77mc=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
+github.com/Kaese72/cloud-user-registry v0.0.6 h1:62A/tzFOL9tn0NL4uzwRgssMnqgBOzidezD21YR2uKA=
+github.com/Kaese72/cloud-user-registry v0.0.6/go.mod h1:uqP0236IoBPobaW4CS3Jcax2WEeRFXu+k1qy2x5xcRU=
 github.com/Kaese72/huemie-lib v0.0.6 h1:9Rclgu5008r13ymW9ffo7C+GGhWZoxvXDsWQ1NmMghw=
 github.com/Kaese72/huemie-lib v0.0.6/go.mod h1:iq14glyPZmZuCb9dEgZ1aOHnjf4nTHtuHXABhVB6WnI=
 github.com/armon/go-radix v1.0.0 h1:F4z6KzEeeQIMeLFa97iZU6vupzoecKdU5TX24SNppXI=
