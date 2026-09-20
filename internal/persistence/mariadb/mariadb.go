@@ -63,8 +63,18 @@ func (m mariadbPersistence) GetAppliance(ctx context.Context, id int64) (persist
 	return scanAppliance(row)
 }
 
-func (m mariadbPersistence) ListAppliancesForGroup(ctx context.Context, groupID int64) ([]persistence.Appliance, error) {
-	rows, err := m.db.QueryContext(ctx, `SELECT `+applianceColumns+` FROM appliances WHERE groupId = ? ORDER BY createdAt ASC`, groupID)
+func (m mariadbPersistence) ListAppliancesForGroup(ctx context.Context, groupID int64, filter persistence.ApplianceFilter) ([]persistence.Appliance, error) {
+	query := `SELECT ` + applianceColumns + ` FROM appliances WHERE groupId = ?`
+	args := []interface{}{groupID}
+	if filter.Status != "" {
+		query += ` AND status = ?`
+		args = append(args, filter.Status)
+	} else if !filter.IncludeRevoked {
+		query += ` AND status <> ?`
+		args = append(args, persistence.StatusRevoked)
+	}
+	query += ` ORDER BY createdAt ASC`
+	rows, err := m.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

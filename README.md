@@ -233,6 +233,11 @@ Group (only that Group's — the JWT's group id scopes the query, same
 authorization rule as above), along with status and last-seen, for a
 simple "is my appliance online" view in the cloud UI.
 
+Revoked appliances are omitted by default; pass `?includeRevoked=true` to
+include them. `?status=` narrows to a single status (so `?status=revoked`
+returns revoked appliances without needing `includeRevoked`). Both filters
+are applied in the database query.
+
 ## Architecture
 
 * Data stored in MariaDB, same pattern as cloud-user-registry.

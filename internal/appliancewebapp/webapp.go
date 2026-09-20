@@ -257,10 +257,12 @@ func (app webApp) Enroll(ctx context.Context, input *struct {
 //     reachable over the public internet;
 //   - a logged-in user, authenticated with a use token, gets only the
 //     Appliances owned by their current group, optionally filtered by
-//     ?status=.
+//     ?status=. Revoked appliances are omitted unless ?includeRevoked=true
+//     (an explicit ?status=revoked also returns them).
 func (app webApp) ListAppliances(ctx context.Context, input *struct {
-	Authorization string `header:"Authorization"`
-	Status        string `query:"status"`
+	Authorization  string `header:"Authorization"`
+	Status         string `query:"status"`
+	IncludeRevoked bool   `query:"includeRevoked"`
 }) (*struct {
 	Body []restmodels.ApplianceResponse
 }, error) {
@@ -277,19 +279,13 @@ func (app webApp) ListAppliances(ctx context.Context, input *struct {
 	if err != nil {
 		return nil, huma.Error401Unauthorized("invalid or expired token")
 	}
-	appliances, err := app.persistence.ListAppliancesForGroup(ctx, groupID)
+	appliances, err := app.persistence.ListAppliancesForGroup(ctx, groupID, persistence.ApplianceFilter{
+		Status:         persistence.ApplianceStatus(input.Status),
+		IncludeRevoked: input.IncludeRevoked,
+	})
 	if err != nil {
 		logging.ErrorErr(err, ctx)
 		return nil, huma.Error500InternalServerError("failed to list appliances")
-	}
-	if input.Status != "" {
-		filtered := appliances[:0]
-		for _, a := range appliances {
-			if string(a.Status) == input.Status {
-				filtered = append(filtered, a)
-			}
-		}
-		appliances = filtered
 	}
 	return app.applianceListResponse(appliances), nil
 }

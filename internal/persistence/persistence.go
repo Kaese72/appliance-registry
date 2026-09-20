@@ -57,6 +57,14 @@ type EnrollExchangeCode struct {
 	ExpiresAt      time.Time
 }
 
+// ApplianceFilter narrows ListAppliancesForGroup. A non-empty Status matches
+// only that status (and takes precedence over IncludeRevoked); otherwise
+// revoked appliances are omitted unless IncludeRevoked is set.
+type ApplianceFilter struct {
+	Status         ApplianceStatus
+	IncludeRevoked bool
+}
+
 // ApplianceRegistryDB is the full persistence surface this service needs.
 // It is intentionally one interface rather than several small ones (unlike
 // cloud-user-registry's split) because every handler in this service
@@ -68,7 +76,7 @@ type ApplianceRegistryDB interface {
 	// collisions rare but not impossible.
 	CreateAppliance(ctx context.Context, name string, hostnameLabel string, groupID int64) (Appliance, error)
 	GetAppliance(ctx context.Context, id int64) (Appliance, error)
-	ListAppliancesForGroup(ctx context.Context, groupID int64) ([]Appliance, error)
+	ListAppliancesForGroup(ctx context.Context, groupID int64, filter ApplianceFilter) ([]Appliance, error)
 	ListAppliancesByStatus(ctx context.Context, status ApplianceStatus) ([]Appliance, error)
 	SetApplianceStatus(ctx context.Context, id int64, status ApplianceStatus) error
 	// MarkApplianceClaimed moves an Appliance from pending to active and
