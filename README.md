@@ -280,9 +280,33 @@ An *administrator* of the owning **Group** can:
   cluster; the appliance simply loses cloud connectivity until re-claimed.
 * **Rotate** an **Appliance secret** — generates a new secret without
   changing the hostname or status. Used if a secret is suspected
-  compromised. The appliance needs to be updated with the new secret
-  out-of-band (re-running the claim-equivalent step, or a future
-  authenticated "refresh" endpoint — not yet implemented).
+  compromised. The response carries the new secret, but this cloud-user
+  call has no way to hand it to the appliance, so the appliance would
+  need to be updated out-of-band (re-enrolling). Prefer the appliance
+  rotating itself, below.
+* An **enrolled appliance** can **rotate its own secret**:
+
+  ```
+  POST /appliance-registry/v0/appliances/{id}/secret/rotate
+  Authorization: Bearer <current appliance secret>
+  ```
+
+  It does the same thing as the call above (new secret, hostname and
+  status unchanged, cloud-side `cloud-connect-secret-<id>` and the stored
+  hash both updated) and returns the same response shape as claiming, but
+  is authorized by the appliance's *current* secret instead of a group
+  administrator's JWT. It is triggered manually from the appliance's UI
+  (see cloud-connect's README, "Rotating the appliance secret"). The old
+  secret is invalid as soon as this returns, so the response is the only
+  copy the appliance gets. Any failure to authenticate (wrong, already
+  rotated or revoked secret) is a `401`. If publishing the new value
+  fails, the old secret stays valid and the call can be retried.
+  Appliances enrolled before V003 have no stored hash and so cannot
+  authenticate here - rotate those once from the cloud.
+
+  Rotating writes the new value to the cloud-side Secret, but a running
+  `cloud-connect-server-<id>` only reads it at pod start, so it has to be
+  restarted before it accepts the new secret.
 
 ### Listing
 
@@ -314,8 +338,8 @@ are applied in the database query.
   * **A freshly-installed appliance** (claim only) — the claim token,
     scoped to one appliance id, single-use (see "Claim token" above). It
     has no JWT because it has no user/group identity at that point.
-  * **An enrolled appliance** (redeeming login codes, checking user access)
-    — its Appliance secret, verified against the stored hash and scoped to
+  * **An enrolled appliance** (redeeming login codes, checking user access,
+    rotating its own secret) — its Appliance secret, verified against the stored hash and scoped to
     its own appliance id.
   * **The ArgoCD ApplicationSet Plugin generator** (the active-appliances
     list only) — a static service bearer token, distinct from both of the

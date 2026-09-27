@@ -72,6 +72,7 @@ func main() {
 	huma.Get(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/access/{userId:[0-9]+}", app.CheckAccess)
 	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/revoke", app.Revoke)
 	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/rotate", app.RotateSecret)
+	huma.Post(api, "/appliance-registry/v0/appliances/{applianceId:[0-9]+}/secret/rotate", app.RotateOwnSecret)
 	huma.Post(api, "/appliance-registry/v0/argocd-plugin/api/v1/getparams.execute", app.PluginGetParams)
 
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", config.Loaded.Port), router); err != nil {

@@ -686,6 +686,37 @@ func (app webApp) RotateSecret(ctx context.Context, input *struct {
 	if appliance.Status != persistence.StatusActive {
 		return nil, huma.Error409Conflict("only an active appliance's secret can be rotated")
 	}
+	return app.issueNewSecret(ctx, appliance)
+}
+
+// RotateOwnSecret is the appliance-initiated counterpart of RotateSecret: an
+// enrolled appliance authenticates with its current Appliance secret and gets a
+// fresh one back, so an administrator on the appliance can rotate it from the
+// appliance's own UI without a cloud login. The old secret stops being valid
+// the moment this succeeds, so the response is the only copy the appliance will
+// ever see - see the README's "Revocation / rotation".
+func (app webApp) RotateOwnSecret(ctx context.Context, input *struct {
+	Authorization string `header:"Authorization"`
+	ApplianceID   int64  `path:"applianceId"`
+}) (*struct {
+	Body restmodels.ClaimApplianceResponse
+}, error) {
+	// authenticateAppliance also guarantees the appliance is active.
+	appliance, err := app.authenticateAppliance(ctx, input.ApplianceID, input.Authorization)
+	if err != nil {
+		return nil, err
+	}
+	return app.issueNewSecret(ctx, appliance)
+}
+
+// issueNewSecret generates a replacement Appliance secret and publishes it:
+// first to the cloud-side cloud-connect-secret-<id>, then as the hash the
+// appliance authenticates with. The order is deliberate - if the second step
+// fails the appliance is left holding a secret that still authenticates, and
+// the operation can simply be retried.
+func (app webApp) issueNewSecret(ctx context.Context, appliance persistence.Appliance) (*struct {
+	Body restmodels.ClaimApplianceResponse
+}, error) {
 	secret, err := tokens.GenerateApplianceSecret(appliance.ID)
 	if err != nil {
 		logging.ErrorErr(err, ctx)
