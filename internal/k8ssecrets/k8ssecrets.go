@@ -11,6 +11,8 @@ package k8ssecrets
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 
 	"github.com/Kaese72/appliance-registry/internal/logging"
 	corev1 "k8s.io/api/core/v1"
@@ -97,11 +99,29 @@ func (noopSecretWriter) DeleteApplianceSecret(ctx context.Context, applianceID i
 // those aren't available (not running inside a Kubernetes Pod), it falls
 // back to a no-op implementation instead of failing startup, so the rest of
 // the service (registration, listing, ...) still works in local dev.
-func NewSecretWriter(namespace string) SecretWriter {
+//
+// apiserverProxyURL, if non-empty, routes this client's traffic through
+// that HTTP CONNECT proxy instead of the apiserver's ClusterIP directly --
+// see huemie-lib/k8sauth.NewInClusterClientset for the full rationale (this
+// package predates that helper and so duplicates its proxy-scoping logic
+// rather than depending on it). With it empty, the environment's
+// HTTPS_PROXY (if any, set for some unrelated purpose) is explicitly
+// ignored rather than silently applied here too.
+func NewSecretWriter(namespace string, apiserverProxyURL string) SecretWriter {
 	restConfig, err := rest.InClusterConfig()
 	if err != nil {
 		logging.Warn("not running in-cluster; cloud-connect Secret writes are disabled: "+err.Error(), context.Background())
 		return noopSecretWriter{}
+	}
+	if apiserverProxyURL != "" {
+		proxyURL, err := url.Parse(apiserverProxyURL)
+		if err != nil {
+			logging.Warn("invalid kubernetes apiserver-proxy-url; cloud-connect Secret writes are disabled: "+err.Error(), context.Background())
+			return noopSecretWriter{}
+		}
+		restConfig.Proxy = http.ProxyURL(proxyURL)
+	} else {
+		restConfig.Proxy = func(*http.Request) (*url.URL, error) { return nil, nil }
 	}
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {

@@ -40,7 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	secretWriter := k8ssecrets.NewSecretWriter(config.Loaded.Kubernetes.Namespace)
+	secretWriter := k8ssecrets.NewSecretWriter(config.Loaded.Kubernetes.Namespace, config.Loaded.Kubernetes.ApiserverProxyURL)
 	claimTokenExpiry := time.Duration(config.Loaded.Auth.ClaimTokenExpiryMinutes) * time.Minute
 	exchangeCodeExpiry := time.Duration(config.Loaded.Auth.ExchangeCodeExpiryMinutes) * time.Minute
 

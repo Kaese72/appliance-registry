@@ -105,6 +105,14 @@ func (conf HostnameConfig) Validate() error {
 // warning rather than failing startup.
 type KubernetesConfig struct {
 	Namespace string `json:"namespace" mapstructure:"namespace"`
+	// ApiserverProxyURL, if set, routes this client's apiserver calls
+	// through an HTTP CONNECT proxy dedicated to reaching the apiserver
+	// (e.g. kube-apiserver-proxy) instead of the ClusterIP directly -- see
+	// k8ssecrets.NewSecretWriter. Deliberately its own setting rather than a
+	// generic HTTPS_PROXY env var: a blanket HTTPS_PROXY would silently
+	// capture any other outbound HTTPS call this process makes too, and the
+	// apiserver-only proxy refuses to CONNECT anywhere else.
+	ApiserverProxyURL string `json:"apiserver-proxy-url" mapstructure:"apiserver-proxy-url"`
 }
 
 func (conf KubernetesConfig) Validate() error {
@@ -172,6 +180,7 @@ func init() {
 
 	viper.BindEnv("kubernetes.namespace")
 	viper.SetDefault("kubernetes.namespace", "huemie-cloud")
+	viper.BindEnv("kubernetes.apiserver-proxy-url")
 
 	viper.BindEnv("logging.stdout")
 	viper.SetDefault("logging.stdout", true)
