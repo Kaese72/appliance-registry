@@ -179,9 +179,16 @@ server-to-server - and never lets a user token reach the appliance:
    `POST /appliance-registry/v0/appliances/{id}/login-code` with the user's
    `use` token. The caller's group must own the appliance (404 otherwise, as
    with revoke/rotate). The response is a short-lived, single-use **login
-   code**, and the browser is redirected back to the appliance with it and
-   the `state`. cloud-ui tries the user's other groups if the active one
-   doesn't own the appliance.
+   code** together with the appliance's registered `hostname`. cloud-ui
+   tries the user's other groups if the active one doesn't own the
+   appliance. It then sends the browser back to `return_to` with the code
+   and the `state`, but only without asking if `return_to` is
+   `https://<hostname>`. Any other host (legitimately, the appliance's LAN
+   address) is shown to the user to confirm first. This matters because
+   the appliance's own cloud-login start endpoint is unauthenticated and
+   accepts any `return_to`, and the appliance redeems any code it is
+   handed. A code sent to an attacker's host is therefore as good as a
+   login as that user.
 3. The appliance redeems it, server-to-server, authenticating with its
    **Appliance secret**:
 
@@ -194,8 +201,10 @@ server-to-server - and never lets a user token reach the appliance:
    This consumes the code, re-checks with cloud-user-registry that the user
    is still a member of the owning group, and returns their cloud identity
    (`id`, `username`, `name`, `surname`, `email`). The appliance creates a
-   local user for them on first login. A leaked code is useless without the
-   secret.
+   local user for them on first login. The code can only be redeemed with
+   the secret, but the appliance redeems any code it is handed, so a leaked
+   code still logs its holder in through the appliance. That's why step 2
+   guards where the code is sent.
 
 **Re-checking access.** The appliance's refresh token is renewed about every
 eight minutes. Each time it is presented for a cloud user, the appliance asks:

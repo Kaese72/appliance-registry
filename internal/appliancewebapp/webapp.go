@@ -589,15 +589,17 @@ func (app webApp) CreateLoginCode(ctx context.Context, input *struct {
 	}
 	return &struct {
 		Body restmodels.LoginCodeResponse
-	}{Body: restmodels.LoginCodeResponse{Code: rawCode, ExpiresAt: expiresAt}}, nil
+	}{Body: restmodels.LoginCodeResponse{Code: rawCode, ExpiresAt: expiresAt, Hostname: app.hostname(appliance)}}, nil
 }
 
 // RedeemLoginCode is the server-to-server second leg of cloud login, called
 // by the appliance itself, authenticating with its appliance secret. It
 // consumes the login code, re-verifies the user is still a member of the
-// appliance's owning group, and returns their cloud identity. The code alone
-// is useless without the secret, so leaking it through the browser redirect
-// does not let anyone else log in.
+// appliance's owning group, and returns their cloud identity. Only the
+// appliance can redeem a code, but the appliance redeems any code it is
+// handed. A code leaked through the browser redirect therefore still logs
+// its holder in, which is why cloud-ui only sends it to the appliance's
+// registered hostname without confirmation (see CreateLoginCode's response).
 func (app webApp) RedeemLoginCode(ctx context.Context, input *struct {
 	Authorization string `header:"Authorization"`
 	ApplianceID   int64  `path:"applianceId"`

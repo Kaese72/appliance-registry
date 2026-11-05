@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -216,6 +217,9 @@ func TestCreateLoginCodeOnlyForOwningGroup(t *testing.T) {
 	res, err := h.app.CreateLoginCode(context.Background(), &createInput{Authorization: h.useToken(t, 7, 10), ApplianceID: 1})
 	if err != nil || res.Body.Code == "" {
 		t.Fatalf("expected a code for the owning group, got %v", err)
+	}
+	if res.Body.Hostname == "" || !strings.HasSuffix(res.Body.Hostname, ".appliance.example") {
+		t.Errorf("response must carry the appliance's registered hostname for cloud-ui's return_to check, got %q", res.Body.Hostname)
 	}
 	stored, ok := h.db.codes[tokens.HashExchangeCode(res.Body.Code)]
 	if !ok || stored.UserID != 7 || stored.ApplianceID != 1 {

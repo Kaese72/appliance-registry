@@ -56,6 +56,12 @@ type EnrollApplianceResponse struct {
 type LoginCodeResponse struct {
 	Code      string    `json:"code"`
 	ExpiresAt time.Time `json:"expiresAt"`
+	// Hostname is the appliance's registered public hostname. cloud-ui only
+	// sends the code to it without asking: the appliance's cloud-login start
+	// endpoint is unauthenticated and accepts any return_to, so a return_to
+	// on any other host may be an attacker's and needs the user's explicit
+	// confirmation. See the README's "Cloud login" section.
+	Hostname string `json:"hostname"`
 }
 
 type RedeemLoginCodeRequest struct {
